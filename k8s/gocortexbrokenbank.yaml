@@ -8,35 +8,35 @@
 # "harden" these values as they mirror the vulnerable application profile.
 #
 # Usage:
-#   kubectl apply -f k8s/gocortexbrokenbank.yaml
-#   kubectl get pods -n gocortexbrokenbank
-#   kubectl logs -f deployment/gocortexbrokenbank -n gocortexbrokenbank
+#   kubectl apply -f k8s/brokenbank.yaml
+#   kubectl get pods -n brokenbank
+#   kubectl logs -f deployment/brokenbank -n brokenbank
 
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: gocortexbrokenbank
+  name: brokenbank
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: gocortexbrokenbank
-  namespace: gocortexbrokenbank
+  name: brokenbank
+  namespace: brokenbank
   labels:
-    app: gocortexbrokenbank
+    app: brokenbank
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: gocortexbrokenbank
+      app: brokenbank
   template:
     metadata:
       labels:
-        app: gocortexbrokenbank
+        app: brokenbank
     spec:
       containers:
-        - name: gocortexbrokenbank
-          image: gocortexio/gocortexbrokenbank:latest
+        - name: brokenbank
+          image: "DOCKER_IMAGE"
           imagePullPolicy: Always
           ports:
             # Flask app
@@ -84,7 +84,7 @@ spec:
             - name: SESSION_SECRET
               value: "hardcoded-docker-secret-key"
             - name: DATABASE_URL
-              value: "sqlite:///app/instance/gocortexbrokenbank.db"
+              value: "sqlite:///app/instance/brokenbank.db"
             - name: FLASK_ENV
               value: "production"
             - name: LOCALE
