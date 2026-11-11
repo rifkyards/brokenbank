@@ -55,11 +55,6 @@ jobs:
           echo "Branch     : $BRANCH"
           echo "Image tag  : $IMAGE_TAG"
 
-      - name: Install Cortex scan dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libhyperscan5
-
       - name: Download cortexcli
         run: |
           RESPONSE=$(curl -s --location \
