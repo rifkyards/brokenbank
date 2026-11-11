@@ -8,35 +8,35 @@
 # "harden" these values as they mirror the vulnerable application profile.
 #
 # Usage:
-#   kubectl apply -f k8s/brokenbank.yaml
-#   kubectl get pods -n brokenbank
-#   kubectl logs -f deployment/brokenbank -n brokenbank
+#   kubectl apply -f k8s/gocortexbrokenbank.yaml
+#   kubectl get pods -n gocortexbrokenbank
+#   kubectl logs -f deployment/gocortexbrokenbank -n gocortexbrokenbank
 
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: brokenbank
+  name: gocortexbrokenbank
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: brokenbank
-  namespace: brokenbank
+  name: gocortexbrokenbank
+  namespace: gocortexbrokenbank
   labels:
-    app: brokenbank
+    app: gocortexbrokenbank
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app:brokenbank
+      app: gocortexbrokenbank
   template:
     metadata:
       labels:
-        app: brokenbank
+        app: gocortexbrokenbank
     spec:
       containers:
-        - name: brokenbank
-          image: "IMAGE_TAG"
+        - name: gocortexbrokenbank
+          image: gocortexio/gocortexbrokenbank:latest
           imagePullPolicy: Always
           ports:
             # Flask app
@@ -56,11 +56,35 @@ spec:
               containerPort: 7777
               hostPort: 7777
               protocol: TCP
+
+            # OTel Prometheus scrape endpoint (poll-based metrics)
+            - name: metrics
+              containerPort: 9464
+              hostPort: 9464
+              protocol: TCP
+
+            # sshd - leaked deployment key / weak root password login
+            - name: ssh
+              containerPort: 22
+              hostPort: 2222
+              protocol: TCP
+
+            # Live Transaction Ticker (WebSocket)
+            - name: ticker
+              containerPort: 6666
+              hostPort: 6666
+              protocol: TCP
+
+            # PHP eStatements portal (Apache mod_php)
+            - name: estatements
+              containerPort: 8085
+              hostPort: 8085
+              protocol: TCP
           env:
             - name: SESSION_SECRET
               value: "hardcoded-docker-secret-key"
             - name: DATABASE_URL
-              value: "sqlite:///app/instance/brokenbank.db"
+              value: "sqlite:///app/instance/gocortexbrokenbank.db"
             - name: FLASK_ENV
               value: "production"
             - name: LOCALE
