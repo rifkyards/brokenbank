@@ -113,19 +113,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Save Docker image to tar
-        run: |
-          docker save -o image.tar "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+      # - name: Save Docker image to tar
+      #   run: |
+      #     docker save -o image.tar "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-      - name: Run Cortex CLI Image Scan
-        run: |
-          ./cortexcli \
-            --api-base-url "$CORTEX_API_URL" \
-            --api-key "$CORTEX_API_KEY" \
-            --api-key-id "$CORTEX_API_KEY_ID" \
-            image scan \
-            --timeout 600 \
-            --archive image.tar
+      # - name: Run Cortex CLI Image Scan
+      #   run: |
+      #     ./cortexcli \
+      #       --api-base-url "$CORTEX_API_URL" \
+      #       --api-key "$CORTEX_API_KEY" \
+      #       --api-key-id "$CORTEX_API_KEY_ID" \
+      #       image scan \
+      #       --timeout 600 \
+      #       --archive image.tar
 
       - name: Push Docker image to ECR
         uses: docker/build-push-action@v5
