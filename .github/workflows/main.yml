@@ -10,8 +10,8 @@
 name: Build, Push and Deploy BrokenBank
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -32,6 +32,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          
       - name: Set image tag, repo and branch
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
@@ -79,8 +84,9 @@ jobs:
             --repo-id "$REPO_ID" \
             --branch "$BRANCH" \
             --source "GITHUB_ACTIONS" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}" \
             --create-repo-if-missing
-
+            
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
