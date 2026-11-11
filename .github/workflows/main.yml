@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: GoCortexIO
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Build and Push Container Image to Docker Hub
-# Triggers on version tag pushes (e.g., v1.3.6)
-# Image tags: full version (1.3.6) and latest only
-# Multi-architecture: linux/amd64 and linux/arm64 (Apple Silicon)
-# Requires DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets in repository settings
+# Code Scan, Build, Image Scan, Push to Amazon ECR, and Deploy to EKS
+# Triggers on version tag pushes (e.g., v1.3.6) or manual dispatch
+# Image tags: version (1.3.6) or short SHA (manual run), plus latest
+# Requires secrets: CORTEX_API_KEY, CORTEX_API_KEY_ID, CORTEX_API_URL,
+#                   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 
 name: Build, Push and Deploy BrokenBank
 on:
@@ -15,15 +15,12 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: janeshin059/brokenbank-jashin
-  CORTEX_API_KEY: ${{secrets.CORTEX_API_KEY}}
-  CORTEX_API_KEY_ID: ${{secrets.CORTEX_API_KEY_ID}}
-  CORTEX_API_URL: https://api-japac-ccr.xdr.jp.paloaltonetworks.com
-  AWS_REGION: ap-northeast-2
-  EKS_CLUSTER_NAME: pcs-yn-eks-jashin
-
-
+  AWS_REGION: ap-southeast-3
+  EKS_CLUSTER_NAME: rifky-cluster
+  ECR_REPOSITORY: rifkyards/brokenbank
+  CORTEX_API_KEY: ${{ secrets.CORTEX_API_KEY }}
+  CORTEX_API_KEY_ID: ${{ secrets.CORTEX_API_KEY_ID }}
+  CORTEX_API_URL: ${{ secrets.CORTEX_API_URL }}
 
 jobs:
   build-and-push:
@@ -35,125 +32,120 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for multi-architecture builds
-        uses: docker/setup-qemu-action@v3
+      - name: Set image tag, repo and branch
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            IMAGE_TAG="${GITHUB_REF_NAME#v}"                          # v1.3.6 -> 1.3.6
+            BRANCH="${{ github.event.repository.default_branch }}"   # push tag tidak punya branch
+          else
+            IMAGE_TAG="${GITHUB_SHA::7}"                              # manual run -> short SHA
+            BRANCH="${GITHUB_REF_NAME}"
+          fi
+
+          echo "IMAGE_TAG=$IMAGE_TAG"          >> "$GITHUB_ENV"
+          echo "BRANCH=$BRANCH"                >> "$GITHUB_ENV"
+          echo "REPO_ID=$GITHUB_REPOSITORY"    >> "$GITHUB_ENV"
+
+          echo "Repository : $GITHUB_REPOSITORY"
+          echo "Branch     : $BRANCH"
+          echo "Image tag  : $IMAGE_TAG"
+
+      - name: Install Cortex scan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhyperscan5
 
       - name: Download cortexcli
         run: |
-          set -x
-          # crtx_resp=$(curl "${CORTEX_API_URL}/public_api/v1/unified-cli/releases/download-link?os=linux&architecture=amd64" \
-          #   -H "x-xdr-auth-id: ${CORTEX_API_KEY_ID}" \
-          #   -H "Authorization: ${CORTEX_API_KEY}")
-          crtx_resp=$(curl -s "https://api-japac-ccr.xdr.jp.paloaltonetworks.com/public_api/v1/unified-cli/releases/download-link?os=linux&architecture=amd64" -H "x-xdr-auth-id: ${CORTEX_API_KEY_ID}" -H "Authorization: ${CORTEX_API_KEY}") && crtx_url=$(echo $crtx_resp | jq -r ".signed_url") && crtx_file=$(echo $crtx_resp | jq -r ".file_name") && curl -o $crtx_file $crtx_url 
-          crtx_url=$(echo $crtx_resp | jq -r ".signed_url")
-          curl -o cortexcli $crtx_url
+          RESPONSE=$(curl -s --location \
+            "$CORTEX_API_URL/public_api/v1/unified-cli/releases/download-link?os=linux&architecture=amd64" \
+            -H "Authorization: $CORTEX_API_KEY" \
+            -H "x-xdr-auth-id: $CORTEX_API_KEY_ID")
+
+          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.signed_url')
+
+          curl -fL -o cortexcli "$DOWNLOAD_URL"
           chmod +x cortexcli
           ./cortexcli --version
+
+      - name: Run Cortex CLI Code Scan
+        run: |
+          ./cortexcli \
+            --api-base-url "$CORTEX_API_URL" \
+            --api-key "$CORTEX_API_KEY" \
+            --api-key-id "$CORTEX_API_KEY_ID" \
+            code scan \
+            --directory "$GITHUB_WORKSPACE" \
+            --repo-id "$REPO_ID" \
+            --branch "$BRANCH" \
+            --source "GITHUB_ACTIONS" \
+            --create-repo-if-missing
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set ECR registry
+        run: echo "ECR_REGISTRY=${{ steps.ecr.outputs.registry }}" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU for multi-architecture builds
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=true
       - name: Build and Load to Local Docker
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64
           push: false
-          load: true 
-          tags: ${{ steps.meta.outputs.tags }}
+          load: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Save Docker image to tar
         run: |
-            docker save -o image.tar ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker save -o image.tar "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
       - name: Run Cortex CLI Image Scan
         run: |
-          sudo -E ./cortexcli --api-base-url "${CORTEX_API_URL}" --api-key "${CORTEX_API_KEY}" --api-key-id "${CORTEX_API_KEY_ID}" image scan --timeout 600 --archive image.tar
-      - name: Push Docker image
+          sudo -E ./cortexcli \
+            --api-base-url "$CORTEX_API_URL" \
+            --api-key "$CORTEX_API_KEY" \
+            --api-key-id "$CORTEX_API_KEY_ID" \
+            image scan \
+            --timeout 600 \
+            --archive image.tar
+
+      - name: Push Docker image to ECR
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true   
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
           cache-from: type=gha
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy to EKS
         run: |
-          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-          cat <<EOF | kubectl apply -f -			
-          apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: gocortexbrokenbank
-          ---
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: gocortexbrokenbank
-            namespace: gocortexbrokenbank
-          spec:
-            replicas: 1
-            selector:
-              matchLabels:
-                app: gocortexbrokenbank
-            template:
-              metadata:
-                labels:
-                  app: gocortexbrokenbank
-              spec:
-                containers:
-                - name: gocortexbrokenbank
-                  image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-                  imagePullPolicy: Always
-                  ports:
-                  - containerPort: 8080
-                  - containerPort: 8888
-          ---
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: gocortexbrokenbank
-            namespace: gocortexbrokenbank
-            labels:
-              app: gocortexbrokenbank
-            
-          spec:
-            type: LoadBalancer
-            selector:
-              app: gocortexbrokenbank
-            ports:
-              - name: flask
-                port: 8888
-                targetPort: 8888
-                protocol: TCP
-              - name: tomcat
-                port: 9999
-                targetPort: 8080
-                protocol: TCP
-              - name: react
-                port: 7777
-                targetPort: 7777
-                protocol: TCP
-          EOF
+          aws eks update-kubeconfig \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION"
+
+          sed -i \
+            "s|DOCKER_IMAGE|$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" \
+            k8s/gocortexbrokenbank.yaml
+
+          kubectl apply \
+            -f k8s/gocortexbrokenbank.yaml
