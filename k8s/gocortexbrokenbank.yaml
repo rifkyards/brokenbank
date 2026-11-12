@@ -26,6 +26,10 @@ metadata:
     app: brokenbank
 spec:
   replicas: 1
+  # hostPort cuma bisa dipakai 1 pod per node, jadi pod lama harus dimatikan
+  # dulu sebelum pod baru dibuat. RollingUpdate (default) akan macet di Pending.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: brokenbank
