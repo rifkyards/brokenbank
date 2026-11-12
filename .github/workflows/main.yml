@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: GoCortexIO
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Code Scan, Build, Push to Amazon ECR, and Deploy to EKS
+# Code Scan, Build & Push to Amazon ECR, and Deploy to EKS
 # Triggers on push to main or manual dispatch
 # Image tags: short commit SHA, plus latest
-# Requires secrets: CORTEX_API_KEY, CORTEX_API_KEY_ID, CORTEX_API_URL,
-#                   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# Requires secrets:   CORTEX_API_KEY, CORTEX_API_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# Requires variables: CORTEX_API_KEY_ID
 
 name: Build, Push and Deploy BrokenBank
 on:
@@ -19,7 +19,7 @@ env:
   EKS_CLUSTER_NAME: rifky-cluster
   ECR_REPOSITORY: rifkyards/brokenbank
   CORTEX_API_KEY: ${{ secrets.CORTEX_API_KEY }}
-  CORTEX_API_KEY_ID: ${{ secrets.CORTEX_API_KEY_ID }}
+  CORTEX_API_KEY_ID: ${{ vars.CORTEX_API_KEY_ID }}
   CORTEX_API_URL: ${{ secrets.CORTEX_API_URL }}
 
 jobs:
@@ -94,37 +94,25 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build and push image to ECR
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64
-          push: false
-          load: true
+          push: true
+          provenance: false   # tanpa attestation -> 1 manifest, digest = yang di ECR & EKS
+          sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # - name: Save Docker image to tar
-      #   run: |
-      #     docker save -o image.tar "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-      # - name: Run Cortex CLI Image Scan
-      #   run: |
-      #     ./cortexcli \
-      #       --api-base-url "$CORTEX_API_URL" \
-      #       --api-key "$CORTEX_API_KEY" \
-      #       --api-key-id "$CORTEX_API_KEY_ID" \
-      #       image scan \
-      #       --timeout 600 \
-      #       --archive image.tar
-
-      - name: Push image to ECR
+      - name: Show image digest
         run: |
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "Image  : $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Digest : ${{ steps.build.outputs.digest }}"
 
       - name: Deploy to EKS
         run: |
